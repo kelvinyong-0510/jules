@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "WA Snippet Expander",
+  "version": "1.0",
+  "description": "Expands snippets in WhatsApp Web",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"]
+    }
+  ]
+}

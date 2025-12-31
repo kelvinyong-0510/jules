@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 350px; padding: 10px; font-family: sans-serif; }
+    input, textarea { width: 100%; margin-bottom: 5px; box-sizing: border-box; }
+    textarea { height: 60px; resize: vertical; }
+    button { cursor: pointer; }
+    .snippet-item { border: 1px solid #ccc; padding: 5px; margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .snippet-info { flex-grow: 1; margin-right: 5px; }
+    .snippet-trigger { font-weight: bold; color: #007bff; }
+    .snippet-expansion { color: #555; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+    .controls { display: flex; gap: 5px; }
+    .disabled { opacity: 0.6; }
+    #snippet-list { margin-top: 15px; max-height: 300px; overflow-y: auto; }
+    h2 { margin-top: 0; }
+    .actions { margin-top: 10px; display: flex; gap: 5px; }
+  </style>
+</head>
+<body>
+  <h2>WA Expander</h2>
+
+  <div>
+    <input type="text" id="trigger" placeholder="Trigger (e.g., ;test)" />
+    <textarea id="expansion" placeholder="Expansion text"></textarea>
+    <button id="add-btn" style="width: 100%; background: #28a745; color: white; border: none; padding: 8px;">Add Snippet</button>
+  </div>
+
+  <div id="snippet-list"></div>
+
+  <div class="actions">
+    <button id="export-btn">Export JSON</button>
+    <input type="file" id="import-file" accept=".json" style="display: none;" />
+    <button id="import-btn">Import JSON</button>
+  </div>
+
+  <div style="margin-top: 10px; font-size: 0.9em;">
+    <label>
+      <input type="checkbox" id="debug-log"> Enable Debug Logging
+    </label>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
