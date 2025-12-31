@@ -32,28 +32,30 @@ function log(...args) {
 }
 
 document.addEventListener('input', function(e) {
-    // Only fire on contenteditable elements
-    if (!e.target.isContentEditable) return;
+    const target = e.target;
+    if (!document.body.contains(target)) return;
 
-    // Hardening: Check if it's likely the main chat input
-    // WhatsApp usually puts the input in a footer or main region.
-    // Also, checking if it is the active element is good practice.
-    if (document.activeElement !== e.target) return;
+    // Determine the context and text
+    let text = '';
+    let cursorPosition = 0;
+    let isInput = false;
 
-    // Safety check: Ensure we are in a valid context (e.g., inside document body)
-    if (!document.body.contains(e.target)) return;
-
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-
-    const range = selection.getRangeAt(0);
-    const node = range.startContainer;
-
-    // We only care if we are inside a text node
-    if (node.nodeType !== Node.TEXT_NODE) return;
-
-    const text = node.textContent;
-    const cursorPosition = range.startOffset;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        isInput = true;
+        text = target.value;
+        cursorPosition = target.selectionEnd;
+    } else if (target.isContentEditable) {
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        const node = range.startContainer;
+        // We only care if we are inside a text node for contentEditable
+        if (node.nodeType !== Node.TEXT_NODE) return;
+        text = node.textContent;
+        cursorPosition = range.startOffset;
+    } else {
+        return;
+    }
 
     // Check against all enabled snippets
     for (const snippet of snippets) {
@@ -73,20 +75,41 @@ document.addEventListener('input', function(e) {
             if (potentialMatch === trigger) {
                 log('Match found:', trigger);
 
-                // Select the trigger text
-                const newRange = document.createRange();
-                newRange.setStart(node, startCheck);
-                newRange.setEnd(node, cursorPosition);
+                if (isInput) {
+                    // For Input/Textarea
+                    target.selectionStart = startCheck;
+                    target.selectionEnd = cursorPosition;
 
-                selection.removeAllRanges();
-                selection.addRange(newRange);
+                    const success = document.execCommand('insertText', false, replacement);
+                    log('Input replacement success:', success);
 
-                // Replace it using execCommand
-                // This is deprecated but widely used for this exact purpose to preserve undo stack
-                // and trigger React/framework state updates.
-                const success = document.execCommand('insertText', false, replacement);
+                    // Fallback if execCommand fails (though it shouldn't on standard inputs)
+                    if (!success) {
+                       const before = text.substring(0, startCheck);
+                       const after = text.substring(cursorPosition);
+                       target.value = before + replacement + after;
+                       const newCursorPos = startCheck + replacement.length;
+                       target.selectionStart = target.selectionEnd = newCursorPos;
+                       // Dispatch input event to ensure frameworks catch it
+                       target.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
 
-                log('Replacement success:', success);
+                } else {
+                    // For ContentEditable
+                    const selection = window.getSelection();
+                    const range = selection.getRangeAt(0);
+                    const node = range.startContainer;
+
+                    const newRange = document.createRange();
+                    newRange.setStart(node, startCheck);
+                    newRange.setEnd(node, cursorPosition);
+
+                    selection.removeAllRanges();
+                    selection.addRange(newRange);
+
+                    const success = document.execCommand('insertText', false, replacement);
+                    log('ContentEditable replacement success:', success);
+                }
 
                 // Stop after first match
                 break;
