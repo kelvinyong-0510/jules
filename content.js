@@ -59,6 +59,19 @@ function log(...args) {
     }
 }
 
+// React 15/16+ Value Setter hack
+function setNativeValue(element, value) {
+    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
+    const prototype = Object.getPrototypeOf(element);
+    const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+
+    if (valueSetter && valueSetter !== prototypeValueSetter) {
+        prototypeValueSetter.call(element, value);
+    } else {
+        valueSetter.call(element, value);
+    }
+}
+
 // Use Capture Phase (true) to ensure we catch events before web app stops them
 document.addEventListener('input', function(e) {
     const target = e.target;
@@ -75,26 +88,25 @@ document.addEventListener('input', function(e) {
         isInput = true;
         text = target.value;
         cursorPosition = target.selectionEnd;
+
+        // Skip password fields
+        if (target.type === 'password') return;
+
     } else if (target.isContentEditable) {
         const selection = window.getSelection();
         if (!selection.rangeCount) {
-             log('No selection range found');
              return;
         }
         const range = selection.getRangeAt(0);
         const node = range.startContainer;
 
-        // WhatsApp often nests text in spans/divs.
-        // We strictly need the text node to extract the trigger correctly.
         if (node.nodeType !== Node.TEXT_NODE) {
-            log('Cursor not in text node', node);
             return;
         }
 
         text = node.textContent;
         cursorPosition = range.startOffset;
     } else {
-        // Not an editable element we care about
         return;
     }
 
@@ -117,19 +129,30 @@ document.addEventListener('input', function(e) {
 
                 if (isInput) {
                     // For Input/Textarea
+                    const before = text.substring(0, startCheck);
+                    const after = text.substring(cursorPosition);
+                    const newValue = before + replacement + after;
+                    const newCursorPos = startCheck + replacement.length;
+
+                    // Try execCommand first (best for history)
                     target.selectionStart = startCheck;
                     target.selectionEnd = cursorPosition;
-
                     const success = document.execCommand('insertText', false, replacement);
 
-                    // Fallback
                     if (!success) {
-                       const before = text.substring(0, startCheck);
-                       const after = text.substring(cursorPosition);
-                       target.value = before + replacement + after;
-                       const newCursorPos = startCheck + replacement.length;
-                       target.selectionStart = target.selectionEnd = newCursorPos;
-                       target.dispatchEvent(new Event('input', { bubbles: true }));
+                        log('execCommand failed, using value setter hack');
+                        // Fallback with React support
+                        try {
+                            setNativeValue(target, newValue);
+                        } catch (err) {
+                            target.value = newValue;
+                        }
+
+                        target.selectionStart = target.selectionEnd = newCursorPos;
+
+                        // Dispatch multiple events to ensure framework detection
+                        target.dispatchEvent(new Event('input', { bubbles: true }));
+                        target.dispatchEvent(new Event('change', { bubbles: true }));
                     }
 
                 } else {
