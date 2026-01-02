@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const importFile = document.getElementById('import-file');
   const debugLogCheckbox = document.getElementById('debug-log');
 
+  let editingId = null;
+
   // Load snippets on start
   loadSnippets();
   loadSettings();
@@ -18,43 +20,73 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!trigger || !expansion) return;
 
+    const id = editingId || crypto.randomUUID();
+    const snippetKey = 'snippet_' + id;
+
     const snippet = {
-      id: crypto.randomUUID(),
+      id,
       trigger,
       expansion,
       enabled: true
     };
 
-    chrome.storage.local.get(['snippets'], (result) => {
-      const snippets = result.snippets || [];
-      snippets.push(snippet);
-      chrome.storage.local.set({ snippets }, () => {
-        triggerInput.value = '';
-        expansionInput.value = '';
-        loadSnippets();
-      });
-    });
+    // Preserve enabled state if editing
+    if (editingId) {
+        chrome.storage.sync.get([snippetKey], (result) => {
+            if (result[snippetKey]) {
+                snippet.enabled = result[snippetKey].enabled;
+            }
+            save(snippetKey, snippet);
+        });
+    } else {
+        save(snippetKey, snippet);
+    }
   });
 
+  function save(key, data) {
+    const update = {};
+    update[key] = data;
+    chrome.storage.sync.set(update, () => {
+        resetForm();
+        loadSnippets();
+    });
+  }
+
+  function resetForm() {
+    triggerInput.value = '';
+    expansionInput.value = '';
+    editingId = null;
+    addBtn.textContent = 'Add Snippet';
+    addBtn.style.background = '#28a745';
+  }
+
   function loadSnippets() {
-    chrome.storage.local.get(['snippets'], (result) => {
-      const snippets = result.snippets || [];
+    chrome.storage.sync.get(null, (items) => {
+      const snippets = [];
+      for (const key in items) {
+        if (key.startsWith('snippet_')) {
+            snippets.push(items[key]);
+        }
+      }
       renderList(snippets);
     });
   }
 
   function loadSettings() {
-    chrome.storage.local.get(['debugLog'], (result) => {
+    chrome.storage.sync.get(['debugLog'], (result) => {
       debugLogCheckbox.checked = !!result.debugLog;
     });
   }
 
   debugLogCheckbox.addEventListener('change', () => {
-    chrome.storage.local.set({ debugLog: debugLogCheckbox.checked });
+    chrome.storage.sync.set({ debugLog: debugLogCheckbox.checked });
   });
 
   function renderList(snippets) {
     listDiv.innerHTML = '';
+    // Sort by trigger for easier finding
+    snippets.sort((a, b) => a.trigger.localeCompare(b.trigger));
+
     snippets.forEach(s => {
       const item = document.createElement('div');
       item.className = 'snippet-item' + (s.enabled ? '' : ' disabled');
@@ -66,14 +98,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const controls = document.createElement('div');
       controls.className = 'controls';
 
+      const editBtn = document.createElement('button');
+      editBtn.textContent = 'Edit';
+      editBtn.style.marginRight = '2px';
+      editBtn.onclick = () => startEdit(s);
+
       const toggleBtn = document.createElement('button');
       toggleBtn.textContent = s.enabled ? 'On' : 'Off';
-      toggleBtn.onclick = () => toggleSnippet(s.id);
+      toggleBtn.onclick = () => toggleSnippet(s);
 
       const delBtn = document.createElement('button');
       delBtn.textContent = 'Del';
       delBtn.onclick = () => deleteSnippet(s.id);
 
+      controls.appendChild(editBtn);
       controls.appendChild(toggleBtn);
       controls.appendChild(delBtn);
 
@@ -83,30 +121,41 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function toggleSnippet(id) {
-    chrome.storage.local.get(['snippets'], (result) => {
-      const snippets = result.snippets || [];
-      const index = snippets.findIndex(s => s.id === id);
-      if (index !== -1) {
-        snippets[index].enabled = !snippets[index].enabled;
-        chrome.storage.local.set({ snippets }, loadSnippets);
-      }
-    });
+  function startEdit(snippet) {
+      editingId = snippet.id;
+      triggerInput.value = snippet.trigger;
+      expansionInput.value = snippet.expansion;
+      addBtn.textContent = 'Update Snippet';
+      addBtn.style.background = '#007bff';
+      window.scrollTo(0, 0);
+  }
+
+  function toggleSnippet(snippet) {
+    snippet.enabled = !snippet.enabled;
+    const key = 'snippet_' + snippet.id;
+    const update = {};
+    update[key] = snippet;
+    chrome.storage.sync.set(update, loadSnippets);
   }
 
   function deleteSnippet(id) {
     if (!confirm('Are you sure?')) return;
-    chrome.storage.local.get(['snippets'], (result) => {
-      const snippets = result.snippets || [];
-      const newSnippets = snippets.filter(s => s.id !== id);
-      chrome.storage.local.set({ snippets: newSnippets }, loadSnippets);
+    const key = 'snippet_' + id;
+    chrome.storage.sync.remove(key, () => {
+        if (editingId === id) resetForm();
+        loadSnippets();
     });
   }
 
   // Export
   exportBtn.addEventListener('click', () => {
-    chrome.storage.local.get(['snippets'], (result) => {
-      const snippets = result.snippets || [];
+    chrome.storage.sync.get(null, (items) => {
+      const snippets = [];
+      for (const key in items) {
+        if (key.startsWith('snippet_')) {
+            snippets.push(items[key]);
+        }
+      }
       const blob = new Blob([JSON.stringify(snippets, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -127,16 +176,17 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const imported = JSON.parse(event.target.result);
         if (Array.isArray(imported)) {
-          chrome.storage.local.get(['snippets'], (result) => {
-             // Merge strategy: Append. Could be improved to check dupes.
-             const current = result.snippets || [];
-             // Assign IDs if missing
-             const final = [...current, ...imported.map(s => ({ ...s, id: s.id || crypto.randomUUID() }))];
-             chrome.storage.local.set({ snippets: final }, () => {
+             const updates = {};
+             imported.forEach(s => {
+                 const id = s.id || crypto.randomUUID();
+                 const key = 'snippet_' + id;
+                 updates[key] = { ...s, id };
+             });
+
+             chrome.storage.sync.set(updates, () => {
                alert('Imported successfully!');
                loadSnippets();
              });
-          });
         } else {
           alert('Invalid JSON format');
         }

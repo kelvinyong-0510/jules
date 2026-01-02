@@ -2,25 +2,57 @@ let snippets = [];
 let debugLog = false;
 
 // Fetch snippets and settings on load
-chrome.storage.local.get(['snippets', 'debugLog'], (result) => {
-    if (result.snippets) {
-        snippets = result.snippets;
+chrome.storage.sync.get(null, (items) => {
+    // Process snippets
+    const newSnippets = [];
+    for (const key in items) {
+        if (key.startsWith('snippet_')) {
+            newSnippets.push(items[key]);
+        }
     }
-    debugLog = !!result.debugLog;
+    snippets = newSnippets;
+
+    // Process settings
+    if (items.debugLog) {
+        debugLog = !!items.debugLog;
+    }
+
     log('Loaded snippets:', snippets.length);
     log('Debug logging enabled:', debugLog);
 });
 
 // Listen for storage changes
 chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local') {
-        if (changes.snippets) {
-            snippets = changes.snippets.newValue || [];
-            log('Snippets updated:', snippets.length);
-        }
+    if (namespace === 'sync') {
+        let needsRebuild = false;
+
+        // Check for debug log change
         if (changes.debugLog) {
             debugLog = !!changes.debugLog.newValue;
             log('Debug logging updated:', debugLog);
+        }
+
+        // Efficiently update snippets without reloading everything if possible
+        // But for simplicity and correctness with the new schema, we scan the changes
+        for (const key in changes) {
+            if (key.startsWith('snippet_')) {
+                const change = changes[key];
+                if (change.newValue) {
+                    // Add or Update
+                    const index = snippets.findIndex(s => s.id === change.newValue.id);
+                    if (index !== -1) {
+                        snippets[index] = change.newValue;
+                    } else {
+                        snippets.push(change.newValue);
+                    }
+                } else {
+                    // Deleted
+                    // We extract ID from key 'snippet_UUID'
+                    const id = key.replace('snippet_', '');
+                    snippets = snippets.filter(s => s.id !== id);
+                }
+                log('Snippet update detected for:', key);
+            }
         }
     }
 });
