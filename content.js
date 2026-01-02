@@ -24,16 +24,13 @@ chrome.storage.sync.get(null, (items) => {
 // Listen for storage changes
 chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'sync') {
-        let needsRebuild = false;
-
         // Check for debug log change
         if (changes.debugLog) {
             debugLog = !!changes.debugLog.newValue;
             log('Debug logging updated:', debugLog);
         }
 
-        // Efficiently update snippets without reloading everything if possible
-        // But for simplicity and correctness with the new schema, we scan the changes
+        // Efficiently update snippets
         for (const key in changes) {
             if (key.startsWith('snippet_')) {
                 const change = changes[key];
@@ -47,7 +44,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
                     }
                 } else {
                     // Deleted
-                    // We extract ID from key 'snippet_UUID'
                     const id = key.replace('snippet_', '');
                     snippets = snippets.filter(s => s.id !== id);
                 }
@@ -63,9 +59,12 @@ function log(...args) {
     }
 }
 
+// Use Capture Phase (true) to ensure we catch events before web app stops them
 document.addEventListener('input', function(e) {
     const target = e.target;
-    if (!document.body.contains(target)) return;
+
+    // Basic validity check
+    if (!target || !document.body.contains(target)) return;
 
     // Determine the context and text
     let text = '';
@@ -78,14 +77,24 @@ document.addEventListener('input', function(e) {
         cursorPosition = target.selectionEnd;
     } else if (target.isContentEditable) {
         const selection = window.getSelection();
-        if (!selection.rangeCount) return;
+        if (!selection.rangeCount) {
+             log('No selection range found');
+             return;
+        }
         const range = selection.getRangeAt(0);
         const node = range.startContainer;
-        // We only care if we are inside a text node for contentEditable
-        if (node.nodeType !== Node.TEXT_NODE) return;
+
+        // WhatsApp often nests text in spans/divs.
+        // We strictly need the text node to extract the trigger correctly.
+        if (node.nodeType !== Node.TEXT_NODE) {
+            log('Cursor not in text node', node);
+            return;
+        }
+
         text = node.textContent;
         cursorPosition = range.startOffset;
     } else {
+        // Not an editable element we care about
         return;
     }
 
@@ -96,7 +105,6 @@ document.addEventListener('input', function(e) {
         const trigger = snippet.trigger;
         const replacement = snippet.expansion;
 
-        // Skip empty triggers
         if (!trigger) continue;
 
         const startCheck = cursorPosition - trigger.length;
@@ -113,16 +121,14 @@ document.addEventListener('input', function(e) {
                     target.selectionEnd = cursorPosition;
 
                     const success = document.execCommand('insertText', false, replacement);
-                    log('Input replacement success:', success);
 
-                    // Fallback if execCommand fails (though it shouldn't on standard inputs)
+                    // Fallback
                     if (!success) {
                        const before = text.substring(0, startCheck);
                        const after = text.substring(cursorPosition);
                        target.value = before + replacement + after;
                        const newCursorPos = startCheck + replacement.length;
                        target.selectionStart = target.selectionEnd = newCursorPos;
-                       // Dispatch input event to ensure frameworks catch it
                        target.dispatchEvent(new Event('input', { bubbles: true }));
                     }
 
@@ -143,9 +149,8 @@ document.addEventListener('input', function(e) {
                     log('ContentEditable replacement success:', success);
                 }
 
-                // Stop after first match
                 break;
             }
         }
     }
-});
+}, true); // <--- Capture Phase

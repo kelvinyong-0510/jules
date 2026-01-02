@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const importBtn = document.getElementById('import-btn');
   const importFile = document.getElementById('import-file');
   const debugLogCheckbox = document.getElementById('debug-log');
+  const viewDataBtn = document.getElementById('view-data-btn');
 
   let editingId = null;
 
@@ -80,6 +81,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   debugLogCheckbox.addEventListener('change', () => {
     chrome.storage.sync.set({ debugLog: debugLogCheckbox.checked });
+  });
+
+  viewDataBtn.addEventListener('click', () => {
+    chrome.storage.sync.get(null, (items) => {
+        const json = JSON.stringify(items, null, 2);
+        const win = window.open('', 'Storage Data', 'width=600,height=400');
+        if (win) {
+            win.document.write('<pre>' + escapeHtml(json) + '</pre>');
+            win.document.close();
+        } else {
+            alert('Popup blocked. Check console for data.');
+            console.log('Storage Data:', items);
+        }
+    });
   });
 
   function renderList(snippets) {
