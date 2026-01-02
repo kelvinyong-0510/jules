@@ -10,7 +10,8 @@ chrome.storage.sync.get(null, (items) => {
             newSnippets.push(items[key]);
         }
     }
-    snippets = newSnippets;
+    // Sort snippets by length descending to prioritize longer triggers
+    snippets = newSnippets.sort((a, b) => b.trigger.length - a.trigger.length);
 
     // Process settings
     if (items.debugLog) {
@@ -31,6 +32,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         }
 
         // Efficiently update snippets
+        let needsSort = false;
         for (const key in changes) {
             if (key.startsWith('snippet_')) {
                 const change = changes[key];
@@ -47,8 +49,13 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
                     const id = key.replace('snippet_', '');
                     snippets = snippets.filter(s => s.id !== id);
                 }
+                needsSort = true;
                 log('Snippet update detected for:', key);
             }
+        }
+
+        if (needsSort) {
+            snippets.sort((a, b) => b.trigger.length - a.trigger.length);
         }
     }
 });
@@ -72,12 +79,30 @@ function setNativeValue(element, value) {
     }
 }
 
-// Use Capture Phase (true) to ensure we catch events before web app stops them
+// Use Capture Phase to catch event, but check DOM on next tick
 document.addEventListener('input', function(e) {
     const target = e.target;
 
     // Basic validity check
     if (!target || !document.body.contains(target)) return;
+
+    // We use setTimeout to allow the browser to update the DOM/Selection
+    // fully before we read it. This fixes the "off-by-one" char lag
+    // common in React apps (like WhatsApp) where state updates are async.
+    setTimeout(() => {
+        checkAndExpand(target);
+    }, 0);
+
+}, true);
+
+function checkAndExpand(target) {
+    // Re-verify target existence and focus
+    if (!document.body.contains(target)) return;
+
+    // Ensure we are operating on the active element to avoid ghost writes
+    // (Exception: sometimes activeElement is body if focus is lost momentarily,
+    // but usually for typing it matches)
+    // if (document.activeElement !== target && target.tagName !== 'BODY') return;
 
     // Determine the context and text
     let text = '';
@@ -89,20 +114,17 @@ document.addEventListener('input', function(e) {
         text = target.value;
         cursorPosition = target.selectionEnd;
 
-        // Skip password fields
         if (target.type === 'password') return;
 
     } else if (target.isContentEditable) {
         const selection = window.getSelection();
-        if (!selection.rangeCount) {
-             return;
-        }
+        if (!selection.rangeCount) return;
+
         const range = selection.getRangeAt(0);
         const node = range.startContainer;
 
-        if (node.nodeType !== Node.TEXT_NODE) {
-            return;
-        }
+        // WhatsApp/RichText: Cursor must be in a text node
+        if (node.nodeType !== Node.TEXT_NODE) return;
 
         text = node.textContent;
         cursorPosition = range.startOffset;
@@ -134,14 +156,19 @@ document.addEventListener('input', function(e) {
                     const newValue = before + replacement + after;
                     const newCursorPos = startCheck + replacement.length;
 
-                    // Try execCommand first (best for history)
                     target.selectionStart = startCheck;
                     target.selectionEnd = cursorPosition;
-                    const success = document.execCommand('insertText', false, replacement);
+
+                    // Try standard execCommand
+                    let success = false;
+                    try {
+                        success = document.execCommand('insertText', false, replacement);
+                    } catch (e) {
+                        log('execCommand error:', e);
+                    }
 
                     if (!success) {
-                        log('execCommand failed, using value setter hack');
-                        // Fallback with React support
+                        log('execCommand failed/unsupported, using value setter hack');
                         try {
                             setNativeValue(target, newValue);
                         } catch (err) {
@@ -149,8 +176,6 @@ document.addEventListener('input', function(e) {
                         }
 
                         target.selectionStart = target.selectionEnd = newCursorPos;
-
-                        // Dispatch multiple events to ensure framework detection
                         target.dispatchEvent(new Event('input', { bubbles: true }));
                         target.dispatchEvent(new Event('change', { bubbles: true }));
                     }
@@ -172,8 +197,9 @@ document.addEventListener('input', function(e) {
                     log('ContentEditable replacement success:', success);
                 }
 
+                // Stop after first match
                 break;
             }
         }
     }
-}, true); // <--- Capture Phase
+}
